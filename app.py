@@ -327,11 +327,11 @@ defaults = {
     "history": [],
     "total_scans": 0,
     "total_faults": 0,
-    "conf_threshold": 0.50,
+    "conf_threshold": 0.15,
     "alert_enabled": True,
     "autosave": True,
     "cam_continuous": False,
-    "settings_threshold": 50,
+    "settings_threshold": 15,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -398,14 +398,26 @@ PIPELINE_MODELS = {
 }
 
 def _find_model_file(keywords):
-    search_dirs = [_script_dir, os.getcwd(), "/mount/src"]
-    for d in search_dirs:
+    # Build search dirs including one level deep under /mount/src (Streamlit Cloud)
+    base_dirs = [_script_dir, os.getcwd()]
+    mount_src = "/mount/src"
+    if os.path.isdir(mount_src):
+        base_dirs.append(mount_src)
+        for sub in os.listdir(mount_src):
+            sub_path = os.path.join(mount_src, sub)
+            if os.path.isdir(sub_path):
+                base_dirs.append(sub_path)
+
+    for d in base_dirs:
         if not os.path.isdir(d):
             continue
-        for f in os.listdir(d):
-            fl = f.lower().replace("-", "_")
-            if f.endswith(".pt") and any(k in fl for k in keywords):
-                return os.path.join(d, f)
+        try:
+            for f in os.listdir(d):
+                fl = f.lower().replace("-", "_")
+                if f.endswith(".pt") and any(k in fl for k in keywords):
+                    return os.path.join(d, f)
+        except Exception:
+            continue
     return None
 
 @st.cache_resource(show_spinner=False)
@@ -433,9 +445,20 @@ model       = None
 class_names = list(_ensemble.keys()) if _ensemble else list(PIPELINE_MODELS.keys())
 
 if _missing_models:
-    st.warning(f"Model ที่ยังไม่พบ: {', '.join(_missing_models)}")
+    st.warning(f"⚠️ Model ที่ยังไม่พบ: {', '.join(_missing_models)}")
 if not _ensemble:
-    st.error("ไม่พบไฟล์ .pt เลย — กรุณา push model ทั้ง 5 ไฟล์ขึ้น GitHub")
+    st.error("❌ ไม่พบไฟล์ .pt เลย — กรุณา push model ทั้ง 5 ไฟล์ขึ้น GitHub")
+
+# Debug: show scan results in sidebar expander
+with st.expander("🔍 Debug: ตรวจสอบ Model Paths", expanded=False):
+    for cls_name, keywords in PIPELINE_MODELS.items():
+        p = _find_model_file(keywords)
+        if p:
+            st.markdown(f"✅ **{cls_name}** → `{p}`")
+        else:
+            st.markdown(f"❌ **{cls_name}** → ไม่พบ (ค้นหา: {keywords})")
+    st.markdown(f"**script_dir:** `{_script_dir}`")
+    st.markdown(f"**cwd:** `{os.getcwd()}`")
 
 # ───────────────────────────────────────────────────────────────
 # INFERENCE HELPER — runs all ensemble models
@@ -703,7 +726,7 @@ with tab_cam:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown('<div class="card-title">⚙️ Camera Controls</div>', unsafe_allow_html=True)
         cam_conf = st.slider(
-            "Confidence Threshold", 10, 95,
+            "Confidence Threshold", 5, 95,
             int(st.session_state.conf_threshold * 100), 5,
             format="%d%%", key="cam_conf_slider",
         )
@@ -753,7 +776,7 @@ with tab_cam:
             with st.spinner("🔍 Analyzing frame…"):
                 annotated, detections = run_inference(img_pil, conf=st.session_state.conf_threshold)
 
-            result_placeholder.image(annotated, use_container_width=True, caption="Detection Result")
+            result_placeholder.image(annotated, width='stretch', caption="Detection Result")
 
             has_fault = any(d["fault"] for d in detections)
 
@@ -824,7 +847,7 @@ with tab_img:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown('<div class="card-title">📤 Upload</div>', unsafe_allow_html=True)
         img_conf = st.slider(
-            "Confidence Threshold", 10, 95,
+            "Confidence Threshold", 5, 95,
             int(st.session_state.conf_threshold * 100), 5,
             format="%d%%", key="img_conf_slider",
         )
@@ -835,12 +858,12 @@ with tab_img:
             label_visibility="collapsed",
         )
         if uploaded:
-            st.image(uploaded, caption="Preview", use_container_width=True)
+            st.image(uploaded, caption="Preview", width='stretch')
         analyze_btn = st.button(
             "🔍  Analyze Image",
             type="primary",
             disabled=(uploaded is None),
-            use_container_width=True,
+            width='stretch',
             key="img_analyze_btn",
         )
         st.markdown("</div>", unsafe_allow_html=True)
@@ -854,7 +877,7 @@ with tab_img:
             with st.spinner("🔍 Running YOLOv11 inference…"):
                 annotated, detections = run_inference(img_pil, conf=img_conf / 100)
 
-            st.image(annotated, use_container_width=True)
+            st.image(annotated, width='stretch')
 
             has_fault = any(d["fault"] for d in detections)
             status_badge = (
@@ -904,7 +927,7 @@ with tab_img:
                 data=buf.getvalue(),
                 file_name=f"lv_result_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
                 mime="image/png",
-                use_container_width=True,
+                width='stretch',
             )
         else:
             st.markdown(
@@ -945,7 +968,7 @@ with tab_vid:
             "▶  Process Video",
             type="primary",
             disabled=(vid_file is None),
-            use_container_width=True,
+            width='stretch',
             key="vid_process_btn",
         )
         st.markdown("</div>", unsafe_allow_html=True)
@@ -1082,7 +1105,7 @@ with tab_hist:
             unsafe_allow_html=True,
         )
     with col_hb:
-        if st.button("🗑  Clear History", key="clear_hist", use_container_width=True):
+        if st.button("🗑  Clear History", key="clear_hist", width='stretch'):
             st.session_state.history      = []
             st.session_state.total_scans  = 0
             st.session_state.total_faults = 0
@@ -1113,10 +1136,10 @@ with tab_hist:
         def style_status(val):
             return f"color: {'#f85149' if val=='FAULT' else '#3fb950'}; font-weight:700"
 
-        styled = df.style.applymap(style_status, subset=["Status"])
+        styled = df.style.map(style_status, subset=["Status"])
         st.dataframe(
             styled,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             column_config={
                 "Timestamp":  st.column_config.TextColumn("Timestamp", width=160),
@@ -1162,7 +1185,7 @@ with tab_settings:
         st.markdown('<div class="card-title">🤖 AI Configuration</div>', unsafe_allow_html=True)
         new_conf = st.slider(
             "Global Confidence Threshold",
-            10, 95,
+            5, 95,
             int(st.session_state.conf_threshold * 100), 5,
             format="%d%%",
             help="Minimum confidence for a detection to be reported",
@@ -1193,7 +1216,8 @@ with tab_settings:
         for cls_name in PIPELINE_MODELS.keys():
             loaded = cls_name in _ensemble
             dot_color = "var(--green)" if loaded else "var(--red)"
-            status    = "โหลดแล้ว" if loaded else "ไม่พบไฟล์"
+            path_found = _find_model_file(PIPELINE_MODELS[cls_name])
+            status = "โหลดแล้ว" if loaded else (f"พบที่ {os.path.basename(path_found)} แต่โหลดไม่ได้" if path_found else "ไม่พบไฟล์")
             col       = class_color(cls_name)
             emoji     = class_emoji(cls_name)
             _model_rows += (
@@ -1244,13 +1268,13 @@ with tab_settings:
 
         col_r1, col_r2 = st.columns(2)
         with col_r1:
-            if st.button("🗑  Clear All History", use_container_width=True, key="clear_hist_settings"):
+            if st.button("🗑  Clear All History", width='stretch', key="clear_hist_settings"):
                 st.session_state.history      = []
                 st.session_state.total_scans  = 0
                 st.session_state.total_faults = 0
                 st.success("History cleared!")
         with col_r2:
-            if st.button("🔄  Reset Counters", use_container_width=True, key="reset_counters"):
+            if st.button("🔄  Reset Counters", width='stretch', key="reset_counters"):
                 st.session_state.total_scans  = 0
                 st.session_state.total_faults = 0
                 st.success("Counters reset!")
